@@ -2,6 +2,8 @@
 #include "display.h"
 #include "io.h"
 
+// stolen from https://stackoverflow.com/a/58568736/369332
+#define ROUND_DIVIDE(numer, denom) (((numer) + (denom) / 2) / (denom))
 
 #define MOTOR P1_4
 #define INITIAL_MOTOR_FORCE 1
@@ -11,15 +13,22 @@
 // used to decide when to enter sleep mode
 unsigned long lastInputTime = 0;
 
+
+void setUnusedPinsAsOutput() {
+  const unsigned char pins[] = {P1_2, P1_3, P1_5, P1_6, P1_7};
+  for(unsigned char i=0; i< sizeof(pins)/sizeof(pins[0]); i++) pinMode(pins[i], OUTPUT);
+}
+
 void setup() {
   pinMode(MOTOR, OUTPUT);
   digitalWrite(MOTOR, LOW);
   startButtons();
   startDisplay();
+  setUnusedPinsAsOutput();
   lastInputTime = 0;
 }
 
-const unsigned long presetTimes[] = {30, 60, 60+30, 2*60, 3*60, 5*60, 7*60, 10*60, 20*60, 30*60, 60*60};
+const unsigned long presetTimes[] = {60, 2*60, 3*60, 5*60, 7*60, 10*60, 20*60, 25*60, 30*60, 45*60, 60*60, 90*60};
 const unsigned char numPresetTimes = sizeof(presetTimes) / sizeof(presetTimes[0]);
 
 unsigned int selectedTimerLength = presetTimes[0];
@@ -66,6 +75,7 @@ void loop() {
       attachInterrupt(P1_0, handleButtonInterrupt, RISING);
       attachInterrupt(P1_1, handleButtonInterrupt, RISING);
       __bis_SR_register(GIE + LPM4_bits);
+      delay(2);
       lastInputTime = millis();
       detachInterrupt(P1_0);
       detachInterrupt(P1_1);
@@ -85,8 +95,6 @@ void loop() {
     }
 
     // display selected timer value
-    if (selectedTimerLength < 99)
-      driveDisplay(selectedTimerLength);
     else driveDisplay(selectedTimerLength/60, FLAG_RDECIMAL);
   } else if (IS_STATE(STATE_COUNTING)) {
     const unsigned int timeLeft = selectedTimerLength - (time - startedCountingFromTime)/1000;
@@ -108,12 +116,12 @@ void loop() {
     } else {
       // display the remaining time
       unsigned char decimalFlag = ((time - startedCountingFromTime) % 2000 < 1000) ? FLAG_LDECIMAL : 0;
-      if (timeLeft < 99) driveDisplay((timeLeft/5)*5, decimalFlag);
-      else driveDisplay(timeLeft/60, decimalFlag | FLAG_RDECIMAL);
+      if (timeLeft < 99) driveDisplay(ROUND_DIVIDE(timeLeft,5)*5, decimalFlag);
+      else driveDisplay(ROUND_DIVIDE(timeLeft, 60), decimalFlag | FLAG_RDECIMAL);
     }
   } else if (IS_STATE(STATE_ENDED)) {
     const unsigned long timeBetweenBuzzesInMs = 4000 + 4000 * motorForce;
-    const unsigned long timeOfBuzzInMs = 5 + 40 * motorForce;
+    const unsigned long timeOfBuzzInMs = 20 + 2*motorForce * motorForce;
 
     const bool shouldBuzz = ((time - motorLastOnTime) % (timeBetweenBuzzesInMs + timeOfBuzzInMs)) < timeOfBuzzInMs;
 
@@ -129,11 +137,10 @@ void loop() {
 
     if ((time - endedCountingAt) % 2000 < 1000) driveDisplay(0); // flash zeros on the screen
 
-    if (isBtnAPressed() || isBtnBPressed()) {
+    if (isBtnAPressed() || isBtnBPressed() || ((time - endedCountingAt) > 3*60*1000L)) {
       // go back to selecting time
       lastInputTime = time;
       SET_STATE(STATE_ENTERING);
-      selectedTimerLength = presetTimes[0];
       digitalWrite(MOTOR, LOW);
     }
   } else {
